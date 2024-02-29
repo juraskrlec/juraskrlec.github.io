@@ -1,0 +1,137 @@
+---
+layout: post
+title:  "Understanding the YUV Image Format"
+date:   2024-02-27
+categories: ios image
+---
+In the realm of digital imaging and video processing, the YUV color format plays a crucial role. Unlike the RGB format, which is designed for human vision, YUV is tailored for efficient video compression and broadcasting. This article delves into the intricacies of the YUV image format, with a particular focus on one of its popular subformats, NV12.
+
+**What is YUV?**
+
+YUV refers to a color encoding system used in video applications. It separates the luminance (brightness) and chrominance (color information) into different components. This separation is advantageous for video compression, as the human eye is more sensitive to variations in brightness than color. YUV formats are extensively used in video compression algorithms, including MPEG and H.264.
+
+**Components of YUV**
+
+- Y: Represents the luminance component, which captures the brightness level of the video.
+- U and V: Represent chrominance components, which capture the color information. U indicates how much blue-colored light is in the image, minus the luminance, while V indicates how much red-colored light there is, minus the luminance.
+
+**YUV Subformats**
+
+YUV has several subformats, categorized based on how the U and V components are sampled compared to the Y component. These subformats include YUV420, YUV422, and YUV444, among others. The numbers indicate the ratio of luminance to chrominance sampling, affecting the image quality and compression ratio.
+
+Check out this [great site](https://fourcc.org/yuv.php#IYUV) for great YUV pixel formats explanations. I have it bookmarked and I open it every time when I need to do something with YUVs.
+
+**The NV12 Format**
+
+NV12 is a specific type of YUV 4:2:0 format where chrominance components are stored as an interleaved UV plane following the Y plane. This format is particularly efficient for hardware decoding and rendering, making it widely used in mobile devices, cameras, and for streaming video content.
+
+**Structure of NV12**
+
+The Y component occupies the first part of the image data, with one byte per pixel, representing the luminance.
+The UV component follows the Y data, with alternating U and V values. Each U and V pair is shared by four Y pixels, forming a macro pixel.
+Some advantages of NV12 formats are:
+
+- Efficiency: The NV12 format is highly efficient for processing and storage, reducing bandwidth and storage requirements without significantly compromising image quality.
+- Compatibility: NV12 is supported by a wide range of hardware decoders and media frameworks, enhancing interoperability across different platforms and devices.
+
+**Visualization of NV12 Format**
+
+The best visual representation I have seen so far is the visual representation on its [Wiki page](https://en.wikipedia.org/wiki/YCbCr).
+![](https://github.com/juraskrlec/juraskrlec.github.io/assets/26868155/914f2e8d-ea16-4267-8c1a-584587621f6e)
+
+**iOS and YUV**
+
+When dealing with YUVs on Apple platforms, you'll most likely use **kCVPixelFormatType_420YpCbCr8BiPlanarFullRange** pixel format. It is a specific type of video pixel format used within the Core Video framework on iOS and macOS platforms. It's essential for developers working with video capture, processing, or playback applications on Apple devices. This format is closely related to the NV12 format discussed in the context of YUV color spaces, with some specific characteristics tailored to the iOS ecosystem.
+
+**Key Characteristics**
+
+- Bi-Planar: The format is bi-planar, meaning the Y (luminance) and CbCr (chrominance) components are stored in two separate planes. The Y plane contains all the luminance data, with one byte per pixel. The CbCr plane contains interleaved chrominance data, with one byte for Cb (chroma blue) and one byte for Cr (chroma red) for every two pixels.
+- Full Range: The "Full Range" in its name indicates that the luminance component (Y) uses the full 8-bit range from 0 to 255, unlike the video range (16 to 235) typically used in video encoding. This full range provides better detail in both the shadows and highlights of an image, making it suitable for high-quality video applications.
+- 420 Chroma Subsampling: This format implements 4:2:0 chroma subsampling, where the chrominance information is sampled at half the horizontal and vertical resolution of the luminance. This approach reduces the amount of data needed to represent a color image, which is beneficial for reducing file sizes and bandwidth usage without significantly impacting perceived image quality.
+
+**Rotation**
+
+I had a fun work with this format recently where I needed to rotate the YUV for 90 degrees. When dealing with pixel buffers, it is important to now where the origin point. The default pixel buffer orientation on iOS is landscape right. Origin point is on the upper left corner. But what about when you change the connection's pixel buffer video orientation or video rotation angle? Then the origin point is different. Depending on your ML models, preview layers rotation or something else, you'll most likely rotate the YUV to its desired orientation. 
+
+Rotating a YUV420 image by 90 degrees involves manipulating the Y plane and the UV plane separately due to the semi-planar format of YUV420. In YUV420, the Y plane is full resolution while the UV (chroma) plane is subsampled by a factor of 2 both horizontally and vertically. The code is written in Objective-C. Really like Objective-C more than Swift, don't hate me :) 
+
+**Common**
+
+```
+size_t originalHeight = CVPixelBufferGetHeight(pixelBuffer);
+size_t originalWidth = CVPixelBufferGetWidth(pixelBuffer);
+size_t rotatedWidth = originalHeight; // Swap the dimensions for rotation
+size_t rotatedHeight = originalWidth;
+size_t originalYLumaStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0); // For Y plane
+size_t originalUVStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1); // For the CbCr plane
+        
+rotatedPixelBuffer = nil;
+CVReturn status = CVPixelBufferCreate(kCFAllocatorDefault, rotatedWidth, rotatedHeight, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, NULL, &rotatedPixelBuffer);
+(void)status;
+CVPixelBufferLockBaseAddress(rotatedPixelBuffer, 0);        
+```
+
+**Y Plane Rotation**
+
+```
++ (void)rotateYPlaneFor:(CVImageBufferRef)pixelBuffer rotatedPixelBuffer:(CVImageBufferRef)rotatedPixelBuffer {
+	uint8_t *originalYBaseAddress = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0);
+    uint8_t *rotatedYBaseAddress = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(rotatedPixelBuffer, 0);
+    for (size_t x = 0; x < originalWidth; x++) {
+        for (size_t y = 0; y < originalHeight; y++) {
+            size_t originalIndex = y * originalYLumaStride + x;
+            size_t rotatedIndex;
+            if (isCounterClockwise) {
+                rotatedIndex = (originalWidth - x - 1) * originalHeight + y; // Counterclockwise
+            }
+            else {
+                rotatedIndex = x * originalHeight + (originalHeight - y - 1); // Clockwise
+            }
+            rotatedYBaseAddress[rotatedIndex] = originalYBaseAddress[originalIndex];
+        }
+    }
+}
+```
+
+**UV Plane Rotation**
+
+```
++ (void)rotateCbCrPlaneFor:(CVImageBufferRef)pixelBuffer rotatedPixelBuffer:(CVImageBufferRef)rotatedPixelBuffer {
+    uint8_t *originalCbCrBaseAddress = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1);
+    uint8_t *rotatedCbCrBaseAddress = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(rotatedPixelBuffer, 1);
+    
+    for (size_t x = 0; x < originalWidth; x += 2) { // Half resolution for CbCr
+        for (size_t y = 0; y < originalHeight / 2; y++) {
+            size_t originalIndex = y * originalUVStride + x;
+            size_t rotatedIndex;
+            if (isCounterClockwise) {
+                rotatedIndex = ((originalWidth - x - 2) / 2) * originalHeight + (y * 2); // Counterclockwise
+            }
+            else {
+                rotatedIndex =  (x / 2) * originalHeight + (originalHeight / 2 - y - 1) * 2; // Clockwise
+            }
+
+            rotatedCbCrBaseAddress[rotatedIndex] = originalCbCrBaseAddress[originalIndex];
+            rotatedCbCrBaseAddress[rotatedIndex + 1] = originalCbCrBaseAddress[originalIndex + 1];
+        }
+    }
+}
+```
+
+**Don't forget**
+
+Lock the adresses when you start:
+
+```
+CVPixelBufferLockBaseAddress(pixelBuffer, 0);
+CVPixelBufferLockBaseAddress(rotatedPixelBuffer, 0);
+```
+
+and release when you are done:
+
+```
+CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+CFRelease(pixelBuffer);
+CVPixelBufferUnlockBaseAddress(rotatedPixelBuffer, 0);
+CFRelease(rotatedPixelBuffer);
+```
